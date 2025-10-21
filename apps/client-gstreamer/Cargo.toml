@@ -1,0 +1,16 @@
+[package]
+name = "client-gstreamer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.97"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wtransport = {version = "0.6.1", features = ["dangerous-configuration"] }
+tokio = { version = "1.0", features = ["full"] }
+serde_json = "1.0.140"
+bytes = "1.10.1"
+moqtail = { version = "*", path = "../../libs/moqtail-rs" }
+gstreamer = "0.24.2"
+gstreamer-app = "0.24.2"
