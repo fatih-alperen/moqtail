@@ -67,6 +67,32 @@ pub struct Subscribe {
 
 #[allow(clippy::too_many_arguments)]
 impl Subscribe {
+  /// Creates a basic Draft-16 Subscribe message.
+  /// All parameters (forward, priority, filters) are omitted,
+  /// meaning the receiver will use protocol default behaviors.
+  pub fn new(request_id: u64, track_namespace: Tuple, track_name: TupleField) -> Self {
+    Self {
+      request_id,
+      track_namespace,
+      track_name,
+      subscribe_parameters: Vec::new(),
+    }
+  }
+
+  /// Creates a Subscribe message with custom parameters explicitly provided.
+  pub fn new_with_params(
+    request_id: u64,
+    track_namespace: Tuple,
+    track_name: TupleField,
+    subscribe_parameters: Vec<KeyValuePair>,
+  ) -> Self {
+    Self {
+      request_id,
+      track_namespace,
+      track_name,
+      subscribe_parameters,
+    }
+  }
   pub fn new_next_group_start(
     request_id: u64,
     track_namespace: Tuple,
