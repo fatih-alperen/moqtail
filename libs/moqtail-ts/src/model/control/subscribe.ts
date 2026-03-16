@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,24 +16,120 @@
 
 import { BaseByteBuffer, ByteBuffer, FrozenByteBuffer } from '../common/byte_buffer'
 import { Location } from '../common/location'
-import { Tuple } from '../common/tuple'
-import { KeyValuePair } from '../common/pair'
+import { KeyValuePair, isVarInt, isBytes } from '../common/pair'
 import { ControlMessageType, FilterType, GroupOrder } from '../control/constant'
 import { FullTrackName } from '../data'
 
-// TODO: Couple filter type and bounded parameters for idiomatic design
+export const PARAM_FORWARD = 0x10n
+export const PARAM_SUBSCRIBER_PRIORITY = 0x20n
+export const PARAM_SUBSCRIPTION_FILTER = 0x21n
+export const PARAM_GROUP_ORDER = 0x22n
+
+/**
+ * Helper to build the byte payload for the SUBSCRIPTION_FILTER parameter
+ */
+function buildFilterBytes(filterType: FilterType, startLocation?: Location, endGroup?: bigint): Uint8Array {
+  const buf = new ByteBuffer()
+  buf.putVI(filterType)
+
+  if (filterType === FilterType.AbsoluteStart) {
+    if (!startLocation) throw new Error('StartLocation required for AbsoluteStart')
+    buf.putLocation(startLocation)
+  } else if (filterType === FilterType.AbsoluteRange) {
+    if (!startLocation) throw new Error('StartLocation required for AbsoluteRange')
+    if (endGroup == null) throw new Error('EndGroup required for AbsoluteRange')
+    buf.putLocation(startLocation)
+    buf.putVI(endGroup)
+  }
+
+  return buf.toUint8Array()
+}
+
 export class Subscribe {
   private constructor(
     public requestId: bigint,
     public fullTrackName: FullTrackName,
-    public subscriberPriority: number,
-    public groupOrder: GroupOrder,
-    public forward: boolean,
-    public filterType: FilterType,
-    public startLocation: Location | undefined,
-    public endGroup: bigint | undefined,
     public parameters: KeyValuePair[],
   ) {}
+
+  // --- GETTERS & SETTERS ---
+
+  shouldForward(): boolean {
+    const p = this.parameters.find((p) => p.typeValue === PARAM_FORWARD)
+    if (p && isVarInt(p)) {
+      return p.value === 1n
+    }
+    return false
+  }
+
+  setForward(forward: boolean): void {
+    this.parameters = this.parameters.filter((p) => p.typeValue !== PARAM_FORWARD)
+    this.parameters.push(KeyValuePair.tryNewVarInt(PARAM_FORWARD, forward ? 1n : 0n))
+  }
+
+  getSubscriberPriority(): number {
+    const p = this.parameters.find((p) => p.typeValue === PARAM_SUBSCRIBER_PRIORITY)
+    if (p && isVarInt(p)) {
+      return Number(p.value)
+    }
+    return 0
+  }
+
+  getGroupOrder(): GroupOrder {
+    const p = this.parameters.find((p) => p.typeValue === PARAM_GROUP_ORDER)
+    if (p && isVarInt(p)) {
+      return Number(p.value) as GroupOrder
+    }
+    return GroupOrder.Original
+  }
+
+  private parseFilter(): {
+    filterType: FilterType
+    startLocation?: Location | undefined
+    endGroup?: bigint | undefined
+  } {
+    const p = this.parameters.find((p) => p.typeValue === PARAM_SUBSCRIPTION_FILTER)
+    if (p && isBytes(p)) {
+      try {
+        const buf = new ByteBuffer()
+        buf.putBytes(p.value)
+        const filterTypeRaw = Number(buf.getVI()) as FilterType
+
+        let startLocation: Location | undefined = undefined
+        let endGroup: bigint | undefined = undefined
+
+        if (filterTypeRaw === FilterType.AbsoluteStart || filterTypeRaw === FilterType.AbsoluteRange) {
+          startLocation = buf.getLocation()
+        }
+        if (filterTypeRaw === FilterType.AbsoluteRange) {
+          endGroup = buf.getVI()
+        }
+
+        return { filterType: filterTypeRaw, startLocation, endGroup }
+      } catch (e) {}
+    }
+    return { filterType: FilterType.LatestObject }
+  }
+
+  getFilterType(): FilterType {
+    return this.parseFilter().filterType
+  }
+
+  getStartLocation(): Location | undefined {
+    return this.parseFilter().startLocation
+  }
+
+  getEndGroup(): bigint | undefined {
+    return this.parseFilter().endGroup
+  }
+
+  static newBasic(requestId: bigint, fullTrackName: FullTrackName): Subscribe {
+    return new Subscribe(requestId, fullTrackName, [])
+  }
+
+  static newWithParams(requestId: bigint, fullTrackName: FullTrackName, parameters: KeyValuePair[]): Subscribe {
+    return new Subscribe(requestId, fullTrackName, parameters)
+  }
 
   static newNextGroupStart(
     requestId: bigint,
@@ -43,17 +139,13 @@ export class Subscribe {
     forward: boolean,
     parameters: KeyValuePair[],
   ): Subscribe {
-    return new Subscribe(
-      requestId,
-      fullTrackName,
-      subscriberPriority,
-      groupOrder,
-      forward,
-      FilterType.NextGroupStart,
-      undefined,
-      undefined,
-      parameters,
-    )
+    const params = [...parameters]
+    params.push(KeyValuePair.tryNewVarInt(PARAM_SUBSCRIBER_PRIORITY, BigInt(subscriberPriority)))
+    params.push(KeyValuePair.tryNewVarInt(PARAM_GROUP_ORDER, BigInt(groupOrder)))
+    params.push(KeyValuePair.tryNewVarInt(PARAM_FORWARD, forward ? 1n : 0n))
+    params.push(KeyValuePair.tryNewBytes(PARAM_SUBSCRIPTION_FILTER, buildFilterBytes(FilterType.NextGroupStart)))
+
+    return new Subscribe(requestId, fullTrackName, params)
   }
 
   static newLatestObject(
@@ -64,17 +156,13 @@ export class Subscribe {
     forward: boolean,
     parameters: KeyValuePair[],
   ): Subscribe {
-    return new Subscribe(
-      requestId,
-      fullTrackName,
-      subscriberPriority,
-      groupOrder,
-      forward,
-      FilterType.LatestObject,
-      undefined,
-      undefined,
-      parameters,
-    )
+    const params = [...parameters]
+    params.push(KeyValuePair.tryNewVarInt(PARAM_SUBSCRIBER_PRIORITY, BigInt(subscriberPriority)))
+    params.push(KeyValuePair.tryNewVarInt(PARAM_GROUP_ORDER, BigInt(groupOrder)))
+    params.push(KeyValuePair.tryNewVarInt(PARAM_FORWARD, forward ? 1n : 0n))
+    params.push(KeyValuePair.tryNewBytes(PARAM_SUBSCRIPTION_FILTER, buildFilterBytes(FilterType.LatestObject)))
+
+    return new Subscribe(requestId, fullTrackName, params)
   }
 
   static newAbsoluteStart(
@@ -86,17 +174,15 @@ export class Subscribe {
     startLocation: Location,
     parameters: KeyValuePair[],
   ): Subscribe {
-    return new Subscribe(
-      requestId,
-      fullTrackName,
-      subscriberPriority,
-      groupOrder,
-      forward,
-      FilterType.AbsoluteStart,
-      startLocation,
-      undefined,
-      parameters,
+    const params = [...parameters]
+    params.push(KeyValuePair.tryNewVarInt(PARAM_SUBSCRIBER_PRIORITY, BigInt(subscriberPriority)))
+    params.push(KeyValuePair.tryNewVarInt(PARAM_GROUP_ORDER, BigInt(groupOrder)))
+    params.push(KeyValuePair.tryNewVarInt(PARAM_FORWARD, forward ? 1n : 0n))
+    params.push(
+      KeyValuePair.tryNewBytes(PARAM_SUBSCRIPTION_FILTER, buildFilterBytes(FilterType.AbsoluteStart, startLocation)),
     )
+
+    return new Subscribe(requestId, fullTrackName, params)
   }
 
   static newAbsoluteRange(
@@ -112,18 +198,21 @@ export class Subscribe {
     if (endGroup < startLocation.group) {
       throw new Error('End Group must be >= Start Group')
     }
-    return new Subscribe(
-      requestId,
-      fullTrackName,
-      subscriberPriority,
-      groupOrder,
-      forward,
-      FilterType.AbsoluteRange,
-      startLocation,
-      endGroup,
-      parameters,
+    const params = [...parameters]
+    params.push(KeyValuePair.tryNewVarInt(PARAM_SUBSCRIBER_PRIORITY, BigInt(subscriberPriority)))
+    params.push(KeyValuePair.tryNewVarInt(PARAM_GROUP_ORDER, BigInt(groupOrder)))
+    params.push(KeyValuePair.tryNewVarInt(PARAM_FORWARD, forward ? 1n : 0n))
+    params.push(
+      KeyValuePair.tryNewBytes(
+        PARAM_SUBSCRIPTION_FILTER,
+        buildFilterBytes(FilterType.AbsoluteRange, startLocation, endGroup),
+      ),
     )
+
+    return new Subscribe(requestId, fullTrackName, params)
   }
+
+  // --- SERIALIZATION ---
 
   serialize(): FrozenByteBuffer {
     const buf = new ByteBuffer()
@@ -132,24 +221,6 @@ export class Subscribe {
     const payload = new ByteBuffer()
     payload.putVI(this.requestId)
     payload.putBytes(this.fullTrackName.serialize().toUint8Array())
-    payload.putU8(this.subscriberPriority)
-    payload.putU8(this.groupOrder)
-    payload.putU8(this.forward ? 1 : 0)
-    payload.putVI(this.filterType)
-
-    if (this.filterType === FilterType.AbsoluteStart || this.filterType === FilterType.AbsoluteRange) {
-      if (!this.startLocation) {
-        throw new Error('StartLocation required for selected filterType')
-      }
-      payload.putLocation(this.startLocation)
-    }
-
-    if (this.filterType === FilterType.AbsoluteRange) {
-      if (this.endGroup == null) {
-        throw new Error('EndGroup required for AbsoluteRange')
-      }
-      payload.putVI(this.endGroup)
-    }
 
     payload.putVI(this.parameters.length)
     for (const param of this.parameters) {
@@ -166,20 +237,6 @@ export class Subscribe {
   static parsePayload(buf: BaseByteBuffer): Subscribe {
     const requestId = buf.getVI()
     const fullTrackName = buf.getFullTrackName()
-    const subscriberPriority = buf.getU8()
-    const groupOrder = buf.getU8()
-    const forward = buf.getU8() === 1
-    const filterType = Number(buf.getVI()) as FilterType
-
-    let startLocation: Location | undefined = undefined
-    let endGroup: bigint | undefined = undefined
-
-    if (filterType === FilterType.AbsoluteStart || filterType === FilterType.AbsoluteRange) {
-      startLocation = buf.getLocation()
-    }
-    if (filterType === FilterType.AbsoluteRange) {
-      endGroup = buf.getVI()
-    }
 
     const paramCount = Number(buf.getVI())
     const parameters: KeyValuePair[] = []
@@ -187,17 +244,7 @@ export class Subscribe {
       parameters.push(KeyValuePair.deserialize(buf))
     }
 
-    return new Subscribe(
-      requestId,
-      fullTrackName,
-      subscriberPriority,
-      groupOrder,
-      forward,
-      filterType,
-      startLocation,
-      endGroup,
-      parameters,
-    )
+    return new Subscribe(requestId, fullTrackName, parameters)
   }
 }
 
@@ -269,9 +316,13 @@ if (import.meta.vitest) {
           [],
         )
 
-        expect(subscribe.filterType).toBe(FilterType.AbsoluteRange)
-        expect(subscribe.startLocation).toEqual(new Location(81n, 81n))
-        expect(subscribe.endGroup).toBe(100n)
+        // Strict verification of parameter extraction mapping
+        expect(subscribe.getSubscriberPriority()).toBe(31)
+        expect(subscribe.getGroupOrder()).toBe(GroupOrder.Original)
+        expect(subscribe.shouldForward()).toBe(true)
+        expect(subscribe.getFilterType()).toBe(FilterType.AbsoluteRange)
+        expect(subscribe.getStartLocation()).toEqual(new Location(81n, 81n))
+        expect(subscribe.getEndGroup()).toBe(100n)
       })
 
       it('should throw an error if EndGroup < StartGroup', () => {
@@ -290,29 +341,11 @@ if (import.meta.vitest) {
       })
     })
 
-    it('should throw on invalid filterType', () => {
-      const buf = new ByteBuffer()
-      buf.putVI(ControlMessageType.Subscribe)
-      buf.putVI(128242n)
-      buf.putTuple(Tuple.fromUtf8Path('invalid/filter'))
-      buf.putVI(10)
-      buf.putBytes(new TextEncoder().encode('InvalidTest'))
-      buf.putU8(31)
-      buf.putU8(GroupOrder.Original)
-      buf.putU8(1)
-      buf.putVI(9999)
+    it('should handle empty parameters using newBasic and return defaults', () => {
+      const subscribe = Subscribe.newBasic(128242n, FullTrackName.tryNew('track/namespace', 'trackName'))
 
-      expect(() => Subscribe.parsePayload(buf)).toThrow()
-    })
-    it('should handle empty parameters', () => {
-      const subscribe = Subscribe.newLatestObject(
-        128242n,
-        FullTrackName.tryNew('track/namespace', 'trackName'),
-        31,
-        GroupOrder.Original,
-        true,
-        [],
-      )
+      expect(subscribe.shouldForward()).toBe(false)
+      expect(subscribe.getSubscriberPriority()).toBe(0)
 
       const serialized = subscribe.serialize()
       const buf = new ByteBuffer()

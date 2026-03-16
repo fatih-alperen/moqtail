@@ -127,8 +127,8 @@ export class SubscribePublication {
   ) {
     this.#trackAlias = track.trackAlias!
     this.#publisherPriority = track.publisherPriority
-    this.#subscriberPriority = subscribeMsg.subscriberPriority
-    switch (subscribeMsg.filterType) {
+    this.#subscriberPriority = subscribeMsg.getSubscriberPriority()
+    switch (subscribeMsg.getFilterType()) {
       case FilterType.LatestObject:
         if (largestLocation) {
           this.#startLocation = new Location(largestLocation.group, largestLocation.object + 1n)
@@ -144,14 +144,14 @@ export class SubscribePublication {
         }
         break
       case FilterType.AbsoluteStart:
-        this.#startLocation = subscribeMsg.startLocation!
+        this.#startLocation = subscribeMsg.getStartLocation()!
         break
       case FilterType.AbsoluteRange:
-        this.#startLocation = subscribeMsg.startLocation!
-        this.#endGroup = subscribeMsg.endGroup
+        this.#startLocation = subscribeMsg.getStartLocation()!
+        this.#endGroup = subscribeMsg.getEndGroup()
         break
     }
-    this.#forward = subscribeMsg.forward
+    this.#forward = subscribeMsg.shouldForward()
     this.#subscribeParameters = VersionSpecificParameters.fromKeyValuePairs(subscribeMsg.parameters)
     this.publish()
   }

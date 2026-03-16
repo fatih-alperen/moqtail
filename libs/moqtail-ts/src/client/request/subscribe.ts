@@ -47,10 +47,10 @@ export class SubscribeRequest implements PromiseLike<SubscribeOk | SubscribeErro
   constructor(msg: Subscribe) {
     this.requestId = msg.requestId
     this.fullTrackName = msg.fullTrackName
-    this.startLocation = msg.startLocation
-    this.endGroup = msg.endGroup
-    this.priority = msg.subscriberPriority
-    this.forward = msg.forward
+    this.startLocation = msg.getStartLocation()
+    this.endGroup = msg.getEndGroup()
+    this.priority = msg.getSubscriberPriority()
+    this.forward = msg.shouldForward()
     this.subscribeParameters = msg.parameters
     this.stream = new ReadableStream<MoqtObject>({
       start: (controller) => {
