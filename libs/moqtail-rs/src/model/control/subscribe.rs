@@ -201,6 +201,112 @@ impl Subscribe {
       name: self.track_name.clone(),
     }
   }
+  /// Checks if the forward parameter is set. Defaults to false (0) per Draft-16.
+  pub fn should_forward(&self) -> bool {
+    self
+      .subscribe_parameters
+      .iter()
+      .find(|p| p.get_type() == PARAM_FORWARD)
+      .map(|p| match p {
+        KeyValuePair::VarInt { value, .. } => *value == 1,
+        _ => false,
+      })
+      .unwrap_or(false)
+  }
+
+  /// Sets the forward parameter, overwriting any existing one.
+  pub fn set_forward(&mut self, forward: bool) {
+    self
+      .subscribe_parameters
+      .retain(|p| p.get_type() != PARAM_FORWARD);
+
+    let val = if forward { 1 } else { 0 };
+    self
+      .subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_FORWARD, val).unwrap());
+  }
+  /// Gets the subscriber priority. Defaults to 0 if absent.
+  pub fn subscriber_priority(&self) -> u8 {
+    self
+      .subscribe_parameters
+      .iter()
+      .find(|p| p.get_type() == PARAM_SUBSCRIBER_PRIORITY)
+      .map(|p| match p {
+        KeyValuePair::VarInt { value, .. } => *value as u8,
+        _ => 0,
+      })
+      .unwrap_or(0)
+  }
+
+  /// Gets the group order. Defaults to GroupOrder::Original (or whatever your 0-value is) if absent.
+  pub fn group_order(&self) -> GroupOrder {
+    self
+      .subscribe_parameters
+      .iter()
+      .find(|p| p.get_type() == PARAM_GROUP_ORDER)
+      .map(|p| match p {
+        KeyValuePair::VarInt { value, .. } => {
+          // Fall back to Original if the byte fails to map to a valid GroupOrder enum
+          GroupOrder::try_from(*value as u8).unwrap_or(GroupOrder::Original)
+        }
+        _ => GroupOrder::Original,
+      })
+      .unwrap_or(GroupOrder::Original)
+  }
+
+  /// Private helper to safely deserialize the 0x21 SUBSCRIPTION_FILTER byte payload.
+  fn parse_filter(&self) -> (FilterType, Option<Location>, Option<u64>) {
+    let filter_param = self
+      .subscribe_parameters
+      .iter()
+      .find(|p| p.get_type() == PARAM_SUBSCRIPTION_FILTER);
+
+    if let Some(KeyValuePair::Bytes { value, .. }) = filter_param {
+      let mut payload = value.clone();
+
+      // Attempt to read the filter type varint
+      if let Ok(filter_type_raw) = payload.get_vi()
+        && let Ok(filter_type) = FilterType::try_from(filter_type_raw)
+      {
+        let mut start_location = None;
+        let mut end_group = None;
+
+        // Attempt to read location/group data based on the filter type
+        match filter_type {
+          FilterType::AbsoluteStart => {
+            if let Ok(loc) = Location::deserialize(&mut payload) {
+              start_location = Some(loc);
+            }
+          }
+          FilterType::AbsoluteRange => {
+            if let Ok(loc) = Location::deserialize(&mut payload) {
+              start_location = Some(loc);
+              if let Ok(eg) = payload.get_vi() {
+                end_group = Some(eg);
+              }
+            }
+          }
+          _ => {}
+        }
+        return (filter_type, start_location, end_group);
+      }
+    }
+
+    // Default fallback if the parameter is missing or malformed
+    (FilterType::LatestObject, None, None)
+  }
+
+  pub fn filter_type(&self) -> FilterType {
+    self.parse_filter().0
+  }
+
+  pub fn start_location(&self) -> Option<Location> {
+    self.parse_filter().1
+  }
+
+  pub fn end_group(&self) -> Option<u64> {
+    self.parse_filter().2
+  }
 }
 impl ControlMessageTrait for Subscribe {
   fn serialize(&self) -> Result<Bytes, ParseError> {
