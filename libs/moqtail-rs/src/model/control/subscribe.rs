@@ -22,17 +22,45 @@ use crate::model::data::full_track_name::FullTrackName;
 use crate::model::error::ParseError;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
+pub const PARAM_FORWARD: u64 = 0x10;
+pub const PARAM_SUBSCRIBER_PRIORITY: u64 = 0x20;
+pub const PARAM_SUBSCRIPTION_FILTER: u64 = 0x21;
+pub const PARAM_GROUP_ORDER: u64 = 0x22;
+
+fn build_filter_bytes(
+  filter_type: FilterType,
+  start_location: Option<Location>,
+  end_group: Option<u64>,
+) -> Result<Bytes, ParseError> {
+  let mut payload = BytesMut::new();
+  payload.put_vi(filter_type)?;
+
+  match filter_type {
+    FilterType::AbsoluteStart => {
+      if let Some(ref loc) = start_location {
+        payload.extend_from_slice(&loc.serialize()?);
+      } else {
+        unreachable!()
+      }
+    }
+    FilterType::AbsoluteRange => {
+      if let Some(ref loc) = start_location {
+        payload.extend_from_slice(&loc.serialize()?);
+      }
+      if let Some(eg) = end_group {
+        payload.put_vi(eg)?;
+      }
+    }
+    _ => {}
+  }
+  Ok(payload.freeze())
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Subscribe {
   pub request_id: u64,
   pub track_namespace: Tuple,
   pub track_name: TupleField,
-  pub subscriber_priority: u8,
-  pub group_order: GroupOrder,
-  pub forward: bool,
-  pub filter_type: FilterType,
-  pub start_location: Option<Location>,
-  pub end_group: Option<u64>,
   // TODO: make the following optional
   pub subscribe_parameters: Vec<KeyValuePair>,
 }
@@ -46,18 +74,23 @@ impl Subscribe {
     subscriber_priority: u8,
     group_order: GroupOrder,
     forward: bool,
-    subscribe_parameters: Vec<KeyValuePair>,
+    mut subscribe_parameters: Vec<KeyValuePair>,
   ) -> Self {
+    subscribe_parameters.push(
+      KeyValuePair::try_new_varint(PARAM_SUBSCRIBER_PRIORITY, subscriber_priority as u64).unwrap(),
+    );
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_GROUP_ORDER, group_order as u8 as u64).unwrap());
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_FORWARD, if forward { 1 } else { 0 }).unwrap());
+
+    let filter_bytes = build_filter_bytes(FilterType::NextGroupStart, None, None).unwrap();
+    subscribe_parameters
+      .push(KeyValuePair::try_new_bytes(PARAM_SUBSCRIPTION_FILTER, filter_bytes).unwrap());
     Self {
       request_id,
       track_namespace,
       track_name,
-      subscriber_priority,
-      group_order,
-      forward,
-      filter_type: FilterType::NextGroupStart,
-      start_location: None,
-      end_group: None,
       subscribe_parameters,
     }
   }
@@ -69,18 +102,24 @@ impl Subscribe {
     subscriber_priority: u8,
     group_order: GroupOrder,
     forward: bool,
-    subscribe_parameters: Vec<KeyValuePair>,
+    mut subscribe_parameters: Vec<KeyValuePair>,
   ) -> Self {
+    subscribe_parameters.push(
+      KeyValuePair::try_new_varint(PARAM_SUBSCRIBER_PRIORITY, subscriber_priority as u64).unwrap(),
+    );
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_GROUP_ORDER, group_order as u8 as u64).unwrap());
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_FORWARD, if forward { 1 } else { 0 }).unwrap());
+
+    let filter_bytes = build_filter_bytes(FilterType::LatestObject, None, None).unwrap();
+    subscribe_parameters
+      .push(KeyValuePair::try_new_bytes(PARAM_SUBSCRIPTION_FILTER, filter_bytes).unwrap());
+
     Self {
       request_id,
       track_namespace,
       track_name,
-      subscriber_priority,
-      group_order,
-      forward,
-      filter_type: FilterType::LatestObject,
-      start_location: None,
-      end_group: None,
       subscribe_parameters,
     }
   }
@@ -93,18 +132,25 @@ impl Subscribe {
     group_order: GroupOrder,
     forward: bool,
     start_location: Location,
-    subscribe_parameters: Vec<KeyValuePair>,
+    mut subscribe_parameters: Vec<KeyValuePair>,
   ) -> Self {
+    subscribe_parameters.push(
+      KeyValuePair::try_new_varint(PARAM_SUBSCRIBER_PRIORITY, subscriber_priority as u64).unwrap(),
+    );
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_GROUP_ORDER, group_order as u8 as u64).unwrap());
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_FORWARD, if forward { 1 } else { 0 }).unwrap());
+
+    let filter_bytes =
+      build_filter_bytes(FilterType::AbsoluteStart, Some(start_location), None).unwrap();
+    subscribe_parameters
+      .push(KeyValuePair::try_new_bytes(PARAM_SUBSCRIPTION_FILTER, filter_bytes).unwrap());
+
     Self {
       request_id,
       track_namespace,
       track_name,
-      subscriber_priority,
-      group_order,
-      forward,
-      filter_type: FilterType::AbsoluteStart,
-      start_location: Some(start_location),
-      end_group: None,
       subscribe_parameters,
     }
   }
@@ -118,22 +164,33 @@ impl Subscribe {
     forward: bool,
     start_location: Location,
     end_group: u64,
-    subscribe_parameters: Vec<KeyValuePair>,
+    mut subscribe_parameters: Vec<KeyValuePair>,
   ) -> Self {
     assert!(
       end_group >= start_location.group,
       "End Group must be >= Start Group"
     );
+    subscribe_parameters.push(
+      KeyValuePair::try_new_varint(PARAM_SUBSCRIBER_PRIORITY, subscriber_priority as u64).unwrap(),
+    );
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_GROUP_ORDER, group_order as u8 as u64).unwrap());
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_FORWARD, if forward { 1 } else { 0 }).unwrap());
+
+    let filter_bytes = build_filter_bytes(
+      FilterType::AbsoluteRange,
+      Some(start_location),
+      Some(end_group),
+    )
+    .unwrap();
+    subscribe_parameters
+      .push(KeyValuePair::try_new_bytes(PARAM_SUBSCRIPTION_FILTER, filter_bytes).unwrap());
+
     Self {
       request_id,
       track_namespace,
       track_name,
-      subscriber_priority,
-      group_order,
-      forward,
-      filter_type: FilterType::AbsoluteRange,
-      start_location: Some(start_location),
-      end_group: Some(end_group),
       subscribe_parameters,
     }
   }
@@ -156,29 +213,6 @@ impl ControlMessageTrait for Subscribe {
     payload.extend_from_slice(&self.track_namespace.serialize()?);
     payload.put_vi(self.track_name.len())?;
     payload.extend_from_slice(self.track_name.as_bytes());
-    payload.put_u8(self.subscriber_priority);
-    payload.put_u8(self.group_order as u8);
-    payload.put_u8(self.forward.into());
-    payload.put_vi(self.filter_type)?;
-
-    match self.filter_type {
-      FilterType::AbsoluteStart => {
-        if let Some(ref loc) = self.start_location {
-          payload.extend_from_slice(&loc.serialize()?);
-        } else {
-          unreachable!()
-        }
-      }
-      FilterType::AbsoluteRange => {
-        if let Some(ref loc) = self.start_location {
-          payload.extend_from_slice(&loc.serialize()?);
-        }
-        if let Some(eg) = self.end_group {
-          payload.put_vi(eg)?;
-        }
-      }
-      _ => {}
-    }
 
     payload.put_vi(self.subscribe_parameters.len())?;
     for param in &self.subscribe_parameters {
@@ -223,54 +257,6 @@ impl ControlMessageTrait for Subscribe {
     }
     let track_name = TupleField::new(payload.copy_to_bytes(name_len));
 
-    if payload.remaining() < 1 {
-      return Err(ParseError::NotEnoughBytes {
-        context: "Subscribe::parse_payload(subscriber_priority)",
-        needed: 1,
-        available: 0,
-      });
-    }
-    let subscriber_priority = payload.get_u8();
-
-    if payload.remaining() < 1 {
-      return Err(ParseError::NotEnoughBytes {
-        context: "Subscribe::parse_payload(group_order)",
-        needed: 1,
-        available: 0,
-      });
-    }
-    let group_order_raw = payload.get_u8();
-    let group_order = GroupOrder::try_from(group_order_raw)?;
-
-    let forward_raw = payload.get_u8();
-    if forward_raw > 1 {
-      return Err(ParseError::CastingError {
-        context: "Subscribe::parse_payload(forward)",
-        from_type: "u8",
-        to_type: "SubscribeForwardType",
-        details: format!("invalid Forward value: {}", forward_raw),
-      });
-    }
-    let forward = forward_raw == 1;
-
-    let filter_type_raw = payload.get_vi()?;
-    let filter_type = FilterType::try_from(filter_type_raw)?;
-
-    let mut start_location: Option<Location> = None;
-    let mut end_group: Option<u64> = None;
-
-    match filter_type {
-      FilterType::AbsoluteRange => {
-        start_location = Some(Location::deserialize(payload)?);
-        end_group = Some(payload.get_vi()?);
-      }
-      FilterType::AbsoluteStart => {
-        start_location = Some(Location::deserialize(payload)?);
-      }
-      FilterType::LatestObject => {}
-      FilterType::NextGroupStart => {}
-    }
-
     let param_count_u64 = payload.get_vi()?;
     let param_count: usize =
       param_count_u64
@@ -292,12 +278,6 @@ impl ControlMessageTrait for Subscribe {
       request_id,
       track_namespace,
       track_name,
-      subscriber_priority,
-      group_order,
-      forward,
-      filter_type,
-      start_location,
-      end_group,
       subscribe_parameters,
     }))
   }
@@ -318,26 +298,38 @@ mod tests {
     let subscriber_priority = 31;
     let group_order = GroupOrder::Original;
     let forward = false;
-    let filter_type = FilterType::AbsoluteRange;
     let start_location = Location {
       group: 81,
       object: 81,
     };
     let end_group = 25;
-    let subscribe_parameters = vec![
+
+    let mut subscribe_parameters = vec![
       KeyValuePair::try_new_varint(0, 10).unwrap(),
       KeyValuePair::try_new_bytes(1, Bytes::from_static(b"I'll sync you up")).unwrap(),
     ];
+
+    // Simulating what the constructor would do:
+    subscribe_parameters.push(
+      KeyValuePair::try_new_varint(PARAM_SUBSCRIBER_PRIORITY, subscriber_priority as u64).unwrap(),
+    );
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_GROUP_ORDER, group_order as u8 as u64).unwrap());
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_FORWARD, if forward { 1 } else { 0 }).unwrap());
+    let filter_bytes = build_filter_bytes(
+      FilterType::AbsoluteRange,
+      Some(start_location.clone()),
+      Some(end_group),
+    )
+    .unwrap();
+    subscribe_parameters
+      .push(KeyValuePair::try_new_bytes(PARAM_SUBSCRIPTION_FILTER, filter_bytes).unwrap());
+
     let subscribe = Subscribe {
       request_id,
       track_namespace,
       track_name,
-      subscriber_priority,
-      group_order,
-      forward,
-      filter_type,
-      start_location: Some(start_location),
-      end_group: Some(end_group),
       subscribe_parameters,
     };
 
@@ -359,26 +351,37 @@ mod tests {
     let subscriber_priority = 31;
     let group_order = GroupOrder::Original;
     let forward = true;
-    let filter_type = FilterType::AbsoluteRange;
     let start_location = Location {
       group: 81,
       object: 81,
     };
     let end_group = 25;
-    let subscribe_parameters = vec![
+
+    let mut subscribe_parameters = vec![
       KeyValuePair::try_new_varint(0, 10).unwrap(),
       KeyValuePair::try_new_bytes(1, Bytes::from_static(b"I'll sync you up")).unwrap(),
     ];
+
+    subscribe_parameters.push(
+      KeyValuePair::try_new_varint(PARAM_SUBSCRIBER_PRIORITY, subscriber_priority as u64).unwrap(),
+    );
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_GROUP_ORDER, group_order as u8 as u64).unwrap());
+    subscribe_parameters
+      .push(KeyValuePair::try_new_varint(PARAM_FORWARD, if forward { 1 } else { 0 }).unwrap());
+    let filter_bytes = build_filter_bytes(
+      FilterType::AbsoluteRange,
+      Some(start_location.clone()),
+      Some(end_group),
+    )
+    .unwrap();
+    subscribe_parameters
+      .push(KeyValuePair::try_new_bytes(PARAM_SUBSCRIPTION_FILTER, filter_bytes).unwrap());
+
     let subscribe = Subscribe {
       request_id,
       track_namespace,
       track_name,
-      subscriber_priority,
-      group_order,
-      forward,
-      filter_type,
-      start_location: Some(start_location),
-      end_group: Some(end_group),
       subscribe_parameters,
     };
 
@@ -403,30 +406,12 @@ mod tests {
     let request_id = 128242;
     let track_namespace = Tuple::from_utf8_path("nein/nein/nein");
     let track_name = TupleField::from_utf8("${Name}");
-    let subscriber_priority = 31;
-    let group_order = GroupOrder::Original;
-    let forward = true;
-    let filter_type = FilterType::AbsoluteRange;
-    let start_location = Location {
-      group: 81,
-      object: 81,
-    };
-    let end_group = 25;
-    let subscribe_parameters = vec![
-      KeyValuePair::try_new_varint(0, 10).unwrap(),
-      KeyValuePair::try_new_bytes(1, Bytes::from_static(b"I'll sync you up")).unwrap(),
-    ];
+
     let subscribe = Subscribe {
       request_id,
       track_namespace,
       track_name,
-      subscriber_priority,
-      group_order,
-      forward,
-      filter_type,
-      start_location: Some(start_location),
-      end_group: Some(end_group),
-      subscribe_parameters,
+      subscribe_parameters: vec![],
     };
 
     let mut buf = subscribe.serialize().unwrap();

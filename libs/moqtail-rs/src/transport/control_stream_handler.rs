@@ -191,7 +191,7 @@ mod tests {
   use crate::model::common::tuple::{Tuple, TupleField};
   use crate::model::common::varint::BufMutVarIntExt;
   use crate::model::control::client_setup::ClientSetup;
-  use crate::model::control::constant::{ControlMessageType, FilterType, GroupOrder};
+  use crate::model::control::constant::{ControlMessageType, GroupOrder};
   use crate::model::control::constant::{DRAFT_14, PublishNamespaceErrorCode};
   use crate::model::control::publish_namespace::PublishNamespace;
   use crate::model::control::publish_namespace_cancel::PublishNamespaceCancel;
@@ -354,28 +354,28 @@ mod tests {
     let subscriber_priority = 31;
     let group_order = GroupOrder::Original;
     let forward = true;
-    let filter_type = FilterType::AbsoluteRange;
     let start_location = Location {
-      group: 81,
-      object: 81,
+      group: 25,
+      object: 25,
     };
-    let end_group = 25;
+    let end_group = 81;
     let subscribe_parameters = vec![
       KeyValuePair::try_new_varint(0, 10).unwrap(),
       KeyValuePair::try_new_bytes(1, Bytes::from_static(b"I'll sync you up")).unwrap(),
     ];
-    Subscribe {
+
+    // Use the builder instead of struct initialization
+    Subscribe::new_absolute_range(
       request_id,
       track_namespace,
       track_name,
       subscriber_priority,
       group_order,
       forward,
-      filter_type,
-      start_location: Some(start_location),
-      end_group: Some(end_group),
+      start_location,
+      end_group,
       subscribe_parameters,
-    }
+    )
   }
 
   fn create_test_subscribe_ok() -> SubscribeOk {
