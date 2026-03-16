@@ -112,13 +112,7 @@ pub async fn handle(
         request_id: status_req.request_id,
         track_namespace: status_req.track_namespace,
         track_name: status_req.track_name,
-        subscriber_priority: status_req.subscriber_priority,
-        group_order: status_req.group_order,
-        forward: status_req.forward,
-        filter_type: status_req.filter_type,
-        start_location: status_req.start_location,
-        end_group: status_req.end_group,
-        subscribe_parameters: status_req.subscribe_parameters,
+        subscribe_parameters: status_req.subscribe_parameters.clone(),
       };
 
       // We also need a fake "new_sub" for the relay-side mapping

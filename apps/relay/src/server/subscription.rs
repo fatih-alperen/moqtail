@@ -92,12 +92,12 @@ impl SubscriptionState {
 impl From<Subscribe> for SubscriptionState {
   fn from(subscribe: Subscribe) -> Self {
     Self {
-      subscriber_priority: subscribe.subscriber_priority,
-      _group_order: subscribe.group_order,
-      forward: subscribe.forward,
-      _filter_type: subscribe.filter_type,
-      start_location: subscribe.start_location,
-      end_group: subscribe.end_group.unwrap_or(0),
+      subscriber_priority: subscribe.subscriber_priority(),
+      _group_order: subscribe.group_order(),
+      forward: subscribe.should_forward(),
+      _filter_type: subscribe.filter_type(),
+      start_location: subscribe.start_location(),
+      end_group: subscribe.end_group().unwrap_or(0),
       subscribe_parameters: subscribe.subscribe_parameters,
       last_sent_max_location: None,
       last_received_object_location: None,

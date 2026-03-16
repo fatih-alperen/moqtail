@@ -161,7 +161,7 @@ async fn handle_subscribe_message(
     );
 
     let mut new_sub = sub.clone();
-    new_sub.forward = true;
+    new_sub.set_forward(true);
     new_sub.request_id =
       Session::get_next_relay_request_id(context.relay_next_request_id.clone()).await;
 
